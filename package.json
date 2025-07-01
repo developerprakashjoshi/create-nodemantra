@@ -1,6 +1,6 @@
 {
     "name": "create-nodemantra",
-    "version": "1.0.6",
+    "version": "1.0.7",
     "description": "NodeMantra Core project scaffolding CLI",
     "bin": {
         "create-nodemantra": "index.js"
