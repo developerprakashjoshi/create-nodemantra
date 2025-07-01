@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const ejs = require("ejs");
 
 // Colors for console output
 const colors = {
@@ -63,12 +64,18 @@ function createPackageJson(projectName) {
     "dotenv": "^16.0.3",
     "typeorm": "^0.3.15",
     "reflect-metadata": "^0.1.13",
-    "ejs": "^3.1.9"
+    "ejs": "^3.1.9",
+    "module-alias": "^2.2.3",
+    "multer": "^1.4.5-lts.2",
+    "socket.io": "^4.7.4"
   },
   "devDependencies": {
     "@types/node": "^18.17.6",
     "@types/express": "^4.17.17",
     "@types/cors": "^2.8.13",
+    "@types/ejs": "^3.1.2",
+    "@types/multer": "^1.4.11",
+    "@types/module-alias": "^2.0.4",
     "typescript": "^5.0.0",
     "ts-node": "^10.9.1",
     "nodemon": "^2.0.22",
@@ -95,13 +102,16 @@ function createTsConfig() {
     "emitDecoratorMetadata": true,
     "baseUrl": "./src",
     "paths": {
-      "@/*": ["*"],
-      "@models/*": ["models/*"],
-      "@services/*": ["services/*"],
-      "@controllers/*": ["controllers/*"],
-      "@routes/*": ["routes/*"],
-      "@middlewares/*": ["middlewares/*"],
-      "@config/*": ["config/*"]
+      "@root": ["."],
+      "@controllers": ["app/controllers"],
+      "@models": ["app/models"],
+      "@services": ["app/services"],
+      "@middlewares": ["app/middlewares"],
+      "@validators": ["app/validators"],
+      "@graphschema": ["app/graphschema"],
+      "@libs": ["libs"],
+      "@config": ["config"],
+      "@routes": ["routes"]
     }
   },
   "include": ["src/**/*"],
@@ -130,41 +140,34 @@ CORS_ORIGIN=http://localhost:3000
 }
 
 function createMainIndex() {
-  return `import NodeMantra from 'nodemantra-core';
-import { errorHandler, notFound } from 'nodemantra-core';
-import dotenv from 'dotenv';
+  return `import 'module-alias/register';
+import "./module-alias";
+import "reflect-metadata";
+import dotenv from "dotenv";
 
 dotenv.config();
 
-async function bootstrap() {
-  try {
-    // Create NodeMantra application
-    const app = new NodeMantra(
-      parseInt(process.env.PORT || '3000'),
-      process.env.HOST || 'localhost'
-    );
-
-    // Initialize the application (this will handle database connection)
-    const expressApp = await app.initialize();
-    
-    // Add your custom routes here
-    // expressApp.use('/api/v1', yourRoutes);
-    
-    // Add error handling
-    expressApp.use(notFound);
-    expressApp.use(errorHandler);
-    
-    // Start the server
-    app.start();
-    
-  } catch (error) {
-    console.error('❌ Error starting application:', error);
-    process.exit(1);
-  }
+// Load environment variables based on NODE_ENV
+switch (process.env.NODE_ENV) {
+  case 'production':
+    dotenv.config({ path: '.env.production' });
+    console.log("Connect to production environment");
+    break;
+  case 'development':
+    dotenv.config({ path: '.env.development' });
+    console.log("Connect to development environment");
+    break;
+  case 'stage':
+    dotenv.config({ path: '.env.stage' });
+    console.log("Connect to stage environment");
+    break;
+  default:
+    console.log("Cannot connect to environment");
 }
 
-bootstrap();
-`;
+// Export the framework
+export * from './framework';
+export { default } from './framework';`;
 }
 
 function createBaseModel() {
@@ -605,25 +608,32 @@ import fs from "fs";
 import path from "path";
 import * as ejs from "ejs";
 
+interface Command {
+  name: string;
+  description: string;
+  usage: string;
+  execute: (args: string[]) => Promise<void> | void;
+}
+
 // String utility functions
-const ucwords = (text) => {
-  return text.replace(/\\b\\w/g, function (match) {
+const ucwords = (text: string): string => {
+  return text.replace(/\\b\\w/g, function (match: string) {
     return match.toUpperCase();
   });
 };
 
-const toCamelCase = (text) => {
-  return text.replace(/[-_](.)/g, (_, char) => char.toUpperCase());
+const toCamelCase = (text: string): string => {
+  return text.replace(/[-_](.)/g, (_: string, char: string) => char.toUpperCase());
 };
 
-const toKebabCase = (text) => {
+const toKebabCase = (text: string): string => {
   return text
     .replace(/([a-z])([A-Z])/g, '$1-$2')
     .replace(/[\\s_]+/g, '-')
     .toLowerCase();
 };
 
-const toSnakeCase = (text) => {
+const toSnakeCase = (text: string): string => {
   return text
     .replace(/([a-z])([A-Z])/g, '$1_$2')
     .replace(/[\\s-]+/g, '_')
@@ -631,6 +641,8 @@ const toSnakeCase = (text) => {
 };
 
 class Artisan {
+  private commands: Map<string, Command>;
+
   constructor() {
     this.commands = new Map();
     this.registerCommands();
@@ -801,11 +813,11 @@ class Artisan {
     });
   }
 
-  registerCommand(command) {
+  registerCommand(command: Command): void {
     this.commands.set(command.name, command);
   }
 
-  async execute(args) {
+  async execute(args: string[]): Promise<void> {
     const commandName = args[0];
     
     if (!commandName) {
@@ -869,7 +881,7 @@ class Artisan {
   }
 
   // Make Commands
-  async makeController(name) {
+  async makeController(name: string): Promise<void> {
     if (!name) {
       console.error("❌ Controller name is required.");
       return;
@@ -897,7 +909,7 @@ class Artisan {
     }
   }
 
-  async makeModel(name) {
+  async makeModel(name: string): Promise<void> {
     if (!name) {
       console.error("❌ Model name is required.");
       return;
@@ -925,7 +937,7 @@ class Artisan {
     }
   }
 
-  async makeService(name) {
+  async makeService(name: string): Promise<void> {
     if (!name) {
       console.error("❌ Service name is required.");
       return;
@@ -953,7 +965,7 @@ class Artisan {
     }
   }
 
-  async makeValidator(name) {
+  async makeValidator(name: string): Promise<void> {
     if (!name) {
       console.error("❌ Validator name is required.");
       return;
@@ -981,7 +993,7 @@ class Artisan {
     }
   }
 
-  async makeRoute(name) {
+  async makeRoute(name: string): Promise<void> {
     if (!name) {
       console.error("❌ Route name is required.");
       return;
@@ -1009,7 +1021,7 @@ class Artisan {
     }
   }
 
-  async makeMiddleware(name) {
+  async makeMiddleware(name: string): Promise<void> {
     if (!name) {
       console.error("❌ Middleware name is required.");
       return;
@@ -1037,7 +1049,7 @@ class Artisan {
     }
   }
 
-  async makeTest(name) {
+  async makeTest(name: string): Promise<void> {
     if (!name) {
       console.error("❌ Test name is required.");
       return;
@@ -1065,7 +1077,7 @@ class Artisan {
     }
   }
 
-  async makeSeeder(name) {
+  async makeSeeder(name: string): Promise<void> {
     if (!name) {
       console.error("❌ Seeder name is required.");
       return;
@@ -1093,7 +1105,7 @@ class Artisan {
     }
   }
 
-  async makeMigration(name) {
+  async makeMigration(name: string): Promise<void> {
     if (!name) {
       console.error("❌ Migration name is required.");
       return;
@@ -1123,7 +1135,7 @@ class Artisan {
     }
   }
 
-  async makeResource(name) {
+  async makeResource(name: string): Promise<void> {
     if (!name) {
       console.error("❌ Resource name is required.");
       return;
@@ -1141,14 +1153,14 @@ class Artisan {
   }
 
   // Utility methods
-  ensureDirectoryExists(dirPath) {
+  ensureDirectoryExists(dirPath: string): void {
     if (!fs.existsSync(dirPath)) {
       fs.mkdirSync(dirPath, { recursive: true });
     }
   }
 
   // Database commands
-  async runSeeders(seederName) {
+  async runSeeders(seederName?: string): Promise<void> {
     console.log("🌱 Running database seeders...");
     if (seederName) {
       console.log(\`Running specific seeder: \${seederName}\`);
@@ -1165,7 +1177,7 @@ class Artisan {
     console.log("✅ Migrations completed successfully!");
   }
 
-  async rollbackMigrations(steps) {
+  async rollbackMigrations(steps?: string): Promise<void> {
     const stepCount = steps ? parseInt(steps) : 1;
     console.log(\`🔄 Rolling back \${stepCount} migration(s)...\`);
     // Implementation would go here
@@ -1210,7 +1222,7 @@ class Artisan {
   }
 
   // Server commands
-  async serve(args) {
+  async serve(args: string[]): Promise<void> {
     let port = 3000;
     let host = 'localhost';
 
@@ -1528,6 +1540,59 @@ export const down = async (db: any) => {
 };`;
 }
 
+function createFrameworkFile() {
+  return `// NodeMantra Core Framework Entry Point
+// ... (put the content you want for framework.ts here)
+`;
+}
+
+function createWebSocketFile() {
+  return `// WebSocket server configuration
+// ... (put the content you want for websocket.ts here)
+`;
+}
+
+function createModuleAliasFile() {
+  return `// module-alias.ts
+// ... (put the content you want for module-alias.ts here)
+`;
+}
+
+function createErrorHandlerFile() {
+  return `// ... (put the content you want for error.handler.ts here)
+`;
+}
+
+function createDatabaseConfigFile() {
+  return `// ... (put the content you want for database.ts here)
+`;
+}
+
+function createFileUploadMiddlewareFile() {
+  return `// ... (put the content you want for fileupload.middleware.ts here)
+`;
+}
+
+function createControllerLibFile() {
+  return `// ... (put the content you want for controller.ts here)
+`;
+}
+
+function createServiceLibFile() {
+  return `// ... (put the content you want for service.ts here)
+`;
+}
+
+function createResponseLibFile() {
+  return `// ... (put the content you want for response.ts here)
+`;
+}
+
+function createMeiliSearchLibFile() {
+  return `// ... (put the content you want for meili.search.ts here)
+`;
+}
+
 function main() {
   const projectName = getProjectName();
   const projectPath = path.resolve(process.cwd(), projectName);
@@ -1546,13 +1611,6 @@ function main() {
   // Create project structure
   const directories = [
     'src',
-    'src/controllers',
-    'src/services',
-    'src/models',
-    'src/routes',
-    'src/middlewares',
-    'src/config',
-    'src/tests',
     'src/app',
     'src/app/controllers',
     'src/app/services',
@@ -1560,9 +1618,18 @@ function main() {
     'src/app/middlewares',
     'src/app/validators',
     'src/app/requests',
+    'src/app/graphschema',
+    'src/config',
     'src/database',
     'src/database/seeders',
     'src/database/migrations',
+    'src/routes',
+    'src/libs',
+    'src/utils',
+    'src/tests',
+    'src/storage',
+    'src/vendor',
+    'src/lang',
     '.node_mantra/sdk',
     '.node_mantra/sdk/util',
     '.node_mantra/sdk/template',
@@ -1594,14 +1661,24 @@ function main() {
 
   // Create source files
   createFile(path.join(projectPath, 'src/index.ts'), createMainIndex());
-  createFile(path.join(projectPath, 'src/models/base.model.ts'), createBaseModel());
-  createFile(path.join(projectPath, 'src/models/user.model.ts'), createUserModel());
-  createFile(path.join(projectPath, 'src/services/base.service.ts'), createBaseService());
-  createFile(path.join(projectPath, 'src/services/user.service.ts'), createUserService());
-  createFile(path.join(projectPath, 'src/controllers/base.controller.ts'), createBaseController());
-  createFile(path.join(projectPath, 'src/controllers/user.controller.ts'), createUserController());
+  createFile(path.join(projectPath, 'src/framework.ts'), createFrameworkFile());
+  createFile(path.join(projectPath, 'src/websocket.ts'), createWebSocketFile());
+  createFile(path.join(projectPath, 'src/module-alias.ts'), createModuleAliasFile());
+  createFile(path.join(projectPath, 'src/app/models/base.model.ts'), createBaseModel());
+  createFile(path.join(projectPath, 'src/app/models/user.model.ts'), createUserModel());
+  createFile(path.join(projectPath, 'src/app/services/base.service.ts'), createBaseService());
+  createFile(path.join(projectPath, 'src/app/services/user.service.ts'), createUserService());
+  createFile(path.join(projectPath, 'src/app/controllers/base.controller.ts'), createBaseController());
+  createFile(path.join(projectPath, 'src/app/controllers/user.controller.ts'), createUserController());
   createFile(path.join(projectPath, 'src/routes/base.routes.ts'), createBaseRoutes());
   createFile(path.join(projectPath, 'src/routes/user.routes.ts'), createUserRoutes());
+  createFile(path.join(projectPath, 'src/libs/error.handler.ts'), createErrorHandlerFile());
+  createFile(path.join(projectPath, 'src/config/database.ts'), createDatabaseConfigFile());
+  createFile(path.join(projectPath, 'src/app/middlewares/fileupload.middleware.ts'), createFileUploadMiddlewareFile());
+  createFile(path.join(projectPath, 'src/libs/controller.ts'), createControllerLibFile());
+  createFile(path.join(projectPath, 'src/libs/service.ts'), createServiceLibFile());
+  createFile(path.join(projectPath, 'src/libs/response.ts'), createResponseLibFile());
+  createFile(path.join(projectPath, 'src/libs/meili.search.ts'), createMeiliSearchLibFile());
 
   // Create Artisan CLI
   createDirectory(path.join(projectPath, '.node_mantra', 'sdk'));
