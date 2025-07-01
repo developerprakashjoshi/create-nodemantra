@@ -1,0 +1,32 @@
+{
+    "name": "create-nodemantra",
+    "version": "1.0.4",
+    "description": "NodeMantra Core project scaffolding CLI",
+    "bin": {
+        "create-nodemantra": "index.js"
+    },
+    "keywords": [
+        "nodemantra",
+        "cli",
+        "scaffold",
+        "typescript",
+        "nodejs"
+    ],
+    "author": "Prakash Joshi <developer.prakashjoshi@gmail.com>",
+    "license": "MIT",
+    "scripts": {
+        "test": "echo \"Error: no test specified\" && exit 1"
+    },
+    "dependencies": {},
+    "engines": {
+        "node": ">=14.0.0"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/developerprakashjoshi/create-nodemantra.git"
+    },
+    "bugs": {
+        "url": "https://github.com/developerprakashjoshi/create-nodemantra/issues"
+    },
+    "homepage": "https://github.com/developerprakashjoshi/create-nodemantra#readme"
+}
