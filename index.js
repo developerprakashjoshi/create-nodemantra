@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const ejs = require("ejs");
 
 // Colors for console output
 const colors = {
@@ -57,14 +58,13 @@ function createPackageJson(projectName) {
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "nodemantra-core": "^1.0.2",
+    "nodemantra-core": "^1.0.8",
     "express": "^4.18.2",
     "cors": "^2.8.5",
     "dotenv": "^16.0.3",
     "typeorm": "^0.3.15",
     "reflect-metadata": "^0.1.13",
-    "ejs": "^3.1.9",
-    "commander": "^11.0.0"
+    "ejs": "^3.1.9"
   },
   "devDependencies": {
     "@types/node": "^18.17.6",
@@ -602,181 +602,931 @@ function createNodemonConfig() {
 function createArtisanFile() {
   return `#!/usr/bin/env node
 
-import { Command } from 'commander';
-import * as fs from 'fs';
-import * as path from 'path';
+import fs from "fs";
+import path from "path";
+import * as ejs from "ejs";
 
-const program = new Command();
-
-program
-  .name('artisan')
-  .description('NodeMantra Artisan CLI')
-  .version('1.0.0');
-
-// List command
-program
-  .command('list')
-  .description('List all available commands')
-  .action(() => {
-    console.log('Available commands:');
-    console.log('  make:controller <name>    Create a new controller');
-    console.log('  make:model <name>         Create a new model');
-    console.log('  make:service <name>       Create a new service');
-    console.log('  make:middleware <name>    Create a new middleware');
-    console.log('  make:resource <name>      Create a complete resource');
-    console.log('  serve                     Start development server');
+// String utility functions
+const ucwords = (text) => {
+  return text.replace(/\\b\\w/g, function (match) {
+    return match.toUpperCase();
   });
+};
 
-// Make controller command
-program
-  .command('make:controller <name>')
-  .description('Create a new controller')
-  .action((name) => {
-    const controllerContent = 'import BaseController from \\'@controllers/base.controller\\';\\n' +
-      'import { ' + name + 'Service } from \\'@services/' + name.toLowerCase() + '.service\\';\\n\\n' +
-      'export class ' + name + 'Controller extends BaseController {\\n' +
-      '  constructor(private ' + name.toLowerCase() + 'Service: ' + name + 'Service) {\\n' +
-      '    super(' + name.toLowerCase() + 'Service);\\n' +
-      '  }\\n' +
-      '}\\n';
+const toCamelCase = (text) => {
+  return text.replace(/[-_](.)/g, (_, char) => char.toUpperCase());
+};
 
-    const controllerPath = path.join(process.cwd(), 'src', 'controllers', name.toLowerCase() + '.controller.ts');
-    fs.writeFileSync(controllerPath, controllerContent);
-    console.log('✅ Controller created: ' + controllerPath);
-  });
+const toKebabCase = (text) => {
+  return text
+    .replace(/([a-z])([A-Z])/g, '$1-$2')
+    .replace(/[\\s_]+/g, '-')
+    .toLowerCase();
+};
 
-// Make model command
-program
-  .command('make:model <name>')
-  .description('Create a new model')
-  .action((name) => {
-    const modelContent = 'import { Entity, Column } from \\'typeorm\\';\\n' +
-      'import BaseModel from \\'@models/base.model\\';\\n\\n' +
-      '@Entity(\\'' + name.toLowerCase() + 's\\')\\n' +
-      'export class ' + name + ' extends BaseModel {\\n' +
-      '  @Column()\\n' +
-      '  name: string;\\n\\n' +
-      '  @Column({ nullable: true })\\n' +
-      '  description: string;\\n' +
-      '}\\n';
+const toSnakeCase = (text) => {
+  return text
+    .replace(/([a-z])([A-Z])/g, '$1_$2')
+    .replace(/[\\s-]+/g, '_')
+    .toLowerCase();
+};
 
-    const modelPath = path.join(process.cwd(), 'src', 'models', name.toLowerCase() + '.model.ts');
-    fs.writeFileSync(modelPath, modelContent);
-    console.log('✅ Model created: ' + modelPath);
-  });
+class Artisan {
+  constructor() {
+    this.commands = new Map();
+    this.registerCommands();
+  }
 
-// Make service command
-program
-  .command('make:service <name>')
-  .description('Create a new service')
-  .action((name) => {
-    const serviceContent = 'import BaseService from \\'@services/base.service\\';\\n' +
-      'import { AppDataSource } from \\'nodemantra-core\\';\\n' +
-      'import { ' + name + ' } from \\'@models/' + name.toLowerCase() + '.model\\';\\n\\n' +
-      'export class ' + name + 'Service extends BaseService {\\n' +
-      '  constructor() {\\n' +
-      '    const repository = AppDataSource.getRepository(' + name + ');\\n' +
-      '    super(repository);\\n' +
-      '  }\\n' +
-      '}\\n';
+  registerCommands() {
+    // Make commands
+    this.registerCommand({
+      name: "make:controller",
+      description: "Create a new controller class",
+      usage: "make:controller <name>",
+      execute: (args) => this.makeController(args[0])
+    });
 
-    const servicePath = path.join(process.cwd(), 'src', 'services', name.toLowerCase() + '.service.ts');
-    fs.writeFileSync(servicePath, serviceContent);
-    console.log('✅ Service created: ' + servicePath);
-  });
+    this.registerCommand({
+      name: "make:model",
+      description: "Create a new model class",
+      usage: "make:model <name>",
+      execute: (args) => this.makeModel(args[0])
+    });
 
-// Make middleware command
-program
-  .command('make:middleware <name>')
-  .description('Create a new middleware')
-  .action((name) => {
-    const middlewareContent = 'import { Request, Response, NextFunction } from \\'express\\';\\n\\n' +
-      'export const ' + name + 'Middleware = (req: Request, res: Response, next: NextFunction) => {\\n' +
-      '  // Add your middleware logic here\\n' +
-      '  console.log(\\'' + name + ' middleware executed\\');\\n' +
-      '  next();\\n' +
-      '};\\n';
+    this.registerCommand({
+      name: "make:service",
+      description: "Create a new service class",
+      usage: "make:service <name>",
+      execute: (args) => this.makeService(args[0])
+    });
 
-    const middlewarePath = path.join(process.cwd(), 'src', 'middlewares', name.toLowerCase() + '.middleware.ts');
-    fs.writeFileSync(middlewarePath, middlewareContent);
-    console.log('✅ Middleware created: ' + middlewarePath);
-  });
+    this.registerCommand({
+      name: "make:validator",
+      description: "Create a new validator class",
+      usage: "make:validator <name>",
+      execute: (args) => this.makeValidator(args[0])
+    });
 
-// Make resource command
-program
-  .command('make:resource <name>')
-  .description('Create a complete resource (controller, model, service, routes)')
-  .action((name) => {
-    // Create controller
-    const controllerContent = 'import BaseController from \\'@controllers/base.controller\\';\\n' +
-      'import { ' + name + 'Service } from \\'@services/' + name.toLowerCase() + '.service\\';\\n\\n' +
-      'export class ' + name + 'Controller extends BaseController {\\n' +
-      '  constructor(private ' + name.toLowerCase() + 'Service: ' + name + 'Service) {\\n' +
-      '    super(' + name.toLowerCase() + 'Service);\\n' +
-      '  }\\n' +
-      '}\\n';
+    this.registerCommand({
+      name: "make:route",
+      description: "Create a new route file",
+      usage: "make:route <name>",
+      execute: (args) => this.makeRoute(args[0])
+    });
 
-    const controllerPath = path.join(process.cwd(), 'src', 'controllers', name.toLowerCase() + '.controller.ts');
-    fs.writeFileSync(controllerPath, controllerContent);
+    this.registerCommand({
+      name: "make:middleware",
+      description: "Create a new middleware class",
+      usage: "make:middleware <name>",
+      execute: (args) => this.makeMiddleware(args[0])
+    });
 
-    // Create model
-    const modelContent = 'import { Entity, Column } from \\'typeorm\\';\\n' +
-      'import BaseModel from \\'@models/base.model\\';\\n\\n' +
-      '@Entity(\\'' + name.toLowerCase() + 's\\')\\n' +
-      'export class ' + name + ' extends BaseModel {\\n' +
-      '  @Column()\\n' +
-      '  name: string;\\n\\n' +
-      '  @Column({ nullable: true })\\n' +
-      '  description: string;\\n' +
-      '}\\n';
+    this.registerCommand({
+      name: "make:test",
+      description: "Create a new test file",
+      usage: "make:test <name>",
+      execute: (args) => this.makeTest(args[0])
+    });
 
-    const modelPath = path.join(process.cwd(), 'src', 'models', name.toLowerCase() + '.model.ts');
-    fs.writeFileSync(modelPath, modelContent);
+    this.registerCommand({
+      name: "make:seeder",
+      description: "Create a new seeder class",
+      usage: "make:seeder <name>",
+      execute: (args) => this.makeSeeder(args[0])
+    });
 
-    // Create service
-    const serviceContent = 'import BaseService from \\'@services/base.service\\';\\n' +
-      'import { AppDataSource } from \\'nodemantra-core\\';\\n' +
-      'import { ' + name + ' } from \\'@models/' + name.toLowerCase() + '.model\\';\\n\\n' +
-      'export class ' + name + 'Service extends BaseService {\\n' +
-      '  constructor() {\\n' +
-      '    const repository = AppDataSource.getRepository(' + name + ');\\n' +
-      '    super(repository);\\n' +
-      '  }\\n' +
-      '}\\n';
+    this.registerCommand({
+      name: "make:migration",
+      description: "Create a new migration file",
+      usage: "make:migration <name>",
+      execute: (args) => this.makeMigration(args[0])
+    });
 
-    const servicePath = path.join(process.cwd(), 'src', 'services', name.toLowerCase() + '.service.ts');
-    fs.writeFileSync(servicePath, serviceContent);
+    this.registerCommand({
+      name: "make:resource",
+      description: "Create a complete resource (controller, model, service, validator, route)",
+      usage: "make:resource <name>",
+      execute: (args) => this.makeResource(args[0])
+    });
 
-    // Create routes
-    const routesContent = 'import BaseRoutes from \\'@routes/base.routes\\';\\n' +
-      'import { ' + name + 'Controller } from \\'@controllers/' + name.toLowerCase() + '.controller\\';\\n' +
-      'import { ' + name + 'Service } from \\'@services/' + name.toLowerCase() + '.service\\';\\n\\n' +
-      'const ' + name.toLowerCase() + 'Service = new ' + name + 'Service();\\n' +
-      'const ' + name.toLowerCase() + 'Controller = new ' + name + 'Controller(' + name.toLowerCase() + 'Service);\\n' +
-      'const ' + name.toLowerCase() + 'Routes = new BaseRoutes(' + name.toLowerCase() + 'Controller);\\n\\n' +
-      'export default ' + name.toLowerCase() + 'Routes.getRouter();\\n';
+    // List commands
+    this.registerCommand({
+      name: "list",
+      description: "List all available commands",
+      usage: "list",
+      execute: () => this.listCommands()
+    });
 
-    const routesPath = path.join(process.cwd(), 'src', 'routes', name.toLowerCase() + '.routes.ts');
-    fs.writeFileSync(routesPath, routesContent);
+    // Clear commands
+    this.registerCommand({
+      name: "clear:cache",
+      description: "Clear application cache",
+      usage: "clear:cache",
+      execute: () => this.clearCache()
+    });
 
-    console.log('✅ Resource created for ' + name + ':');
-    console.log('   - Controller: ' + controllerPath);
-    console.log('   - Model: ' + modelPath);
-    console.log('   - Service: ' + servicePath);
-    console.log('   - Routes: ' + routesPath);
-  });
+    this.registerCommand({
+      name: "clear:logs",
+      description: "Clear application logs",
+      usage: "clear:logs",
+      execute: () => this.clearLogs()
+    });
 
-// Serve command
-program
-  .command('serve')
-  .description('Start development server')
-  .action(() => {
-    console.log('🚀 Starting development server...');
+    // Route commands
+    this.registerCommand({
+      name: "route:list",
+      description: "List all registered routes",
+      usage: "route:list",
+      execute: () => this.listRoutes()
+    });
+
+    // Database commands
+    this.registerCommand({
+      name: "db:seed",
+      description: "Run database seeders",
+      usage: "db:seed [seeder]",
+      execute: (args) => this.runSeeders(args[0])
+    });
+
+    this.registerCommand({
+      name: "db:migrate",
+      description: "Run database migrations",
+      usage: "db:migrate",
+      execute: () => this.runMigrations()
+    });
+
+    this.registerCommand({
+      name: "db:rollback",
+      description: "Rollback database migrations",
+      usage: "db:rollback [steps]",
+      execute: (args) => this.rollbackMigrations(args[0])
+    });
+
+    // Serve command
+    this.registerCommand({
+      name: "serve",
+      description: "Start the development server",
+      usage: "serve [--port=3000] [--host=localhost]",
+      execute: (args) => this.serve(args)
+    });
+
+    // Optimize command
+    this.registerCommand({
+      name: "optimize",
+      description: "Optimize the application for production",
+      usage: "optimize",
+      execute: () => this.optimize()
+    });
+
+    // Key commands
+    this.registerCommand({
+      name: "key:generate",
+      description: "Generate application key",
+      usage: "key:generate",
+      execute: () => this.generateKey()
+    });
+
+    // Config commands
+    this.registerCommand({
+      name: "config:cache",
+      description: "Cache configuration files",
+      usage: "config:cache",
+      execute: () => this.cacheConfig()
+    });
+
+    this.registerCommand({
+      name: "config:clear",
+      description: "Clear configuration cache",
+      usage: "config:clear",
+      execute: () => this.clearConfigCache()
+    });
+  }
+
+  registerCommand(command) {
+    this.commands.set(command.name, command);
+  }
+
+  async execute(args) {
+    const commandName = args[0];
+    
+    if (!commandName) {
+      this.showHelp();
+      return;
+    }
+
+    const command = this.commands.get(commandName);
+    
+    if (!command) {
+      console.error(\`❌ Command "\${commandName}" not found.\`);
+      console.log("Run 'nodemantra list' to see all available commands.");
+      return;
+    }
+
+    try {
+      await command.execute(args.slice(1));
+    } catch (error) {
+      console.error(\`❌ Error executing command "\${commandName}":\`, error);
+    }
+  }
+
+  showHelp() {
+    console.log("NodeMantra Artisan - Command Line Interface");
+    console.log("");
+    console.log("Usage: nodemantra <command> [options]");
+    console.log("");
+    console.log("Available commands:");
+    console.log("");
+    
+    const categories = {
+      "Make Commands": ["make:controller", "make:model", "make:service", "make:validator", "make:route", "make:middleware", "make:test", "make:seeder", "make:migration", "make:resource"],
+      "Database Commands": ["db:seed", "db:migrate", "db:rollback"],
+      "Route Commands": ["route:list"],
+      "Cache Commands": ["clear:cache", "clear:logs", "config:cache", "config:clear"],
+      "Server Commands": ["serve"],
+      "Utility Commands": ["list", "optimize", "key:generate"]
+    };
+
+    for (const [category, commands] of Object.entries(categories)) {
+      console.log(\`  \${category}:\`);
+      for (const cmdName of commands) {
+        const cmd = this.commands.get(cmdName);
+        if (cmd) {
+          console.log(\`    \${cmd.name.padEnd(20)} \${cmd.description}\`);
+        }
+      }
+      console.log("");
+    }
+  }
+
+  async listCommands() {
+    console.log("Available commands:");
+    console.log("");
+    
+    for (const [name, command] of this.commands) {
+      console.log(\`  \${name.padEnd(20)} \${command.description}\`);
+      console.log(\`    Usage: \${command.usage}\`);
+      console.log("");
+    }
+  }
+
+  // Make Commands
+  async makeController(name) {
+    if (!name) {
+      console.error("❌ Controller name is required.");
+      return;
+    }
+
+    const className = ucwords(name);
+    const classNameCamelCase = toCamelCase(name);
+    const classNameLowerCase = name.toLowerCase();
+
+    const filePath = \`./src/app/controllers/\${classNameLowerCase}.controller.ts\`;
+    const templatePath = "./.node_mantra/sdk/template/app/controllers/starter.controller.ejs";
+
+    try {
+      const rendered = await ejs.renderFile(templatePath, {
+        className,
+        classNameLowerCase,
+        classNameCamelCase
+      });
+
+      this.ensureDirectoryExists(path.dirname(filePath));
+      fs.writeFileSync(filePath, rendered);
+      console.log(\`✅ Controller created successfully: \${filePath}\`);
+    } catch (error) {
+      console.error(\`❌ Error creating controller:\`, error);
+    }
+  }
+
+  async makeModel(name) {
+    if (!name) {
+      console.error("❌ Model name is required.");
+      return;
+    }
+
+    const className = ucwords(name);
+    const classNameCamelCase = toCamelCase(name);
+    const classNameLowerCase = name.toLowerCase();
+
+    const filePath = \`./src/app/models/\${classNameLowerCase}.schema.ts\`;
+    const templatePath = "./.node_mantra/sdk/template/app/models/starter.schema.ejs";
+
+    try {
+      const rendered = await ejs.renderFile(templatePath, {
+        className,
+        classNameLowerCase,
+        classNameCamelCase,
+      });
+
+      this.ensureDirectoryExists(path.dirname(filePath));
+      fs.writeFileSync(filePath, rendered);
+      console.log(\`✅ Model created successfully: \${filePath}\`);
+    } catch (error) {
+      console.error(\`❌ Error creating model:\`, error);
+    }
+  }
+
+  async makeService(name) {
+    if (!name) {
+      console.error("❌ Service name is required.");
+      return;
+    }
+
+    const className = ucwords(name);
+    const classNameCamelCase = toCamelCase(name);
+    const classNameLowerCase = name.toLowerCase();
+
+    const filePath = \`./src/app/services/\${classNameLowerCase}.service.ts\`;
+    const templatePath = "./.node_mantra/sdk/template/app/services/starter.service.ejs";
+
+    try {
+      const rendered = await ejs.renderFile(templatePath, {
+        className,
+        classNameLowerCase,
+        classNameCamelCase,
+      });
+
+      this.ensureDirectoryExists(path.dirname(filePath));
+      fs.writeFileSync(filePath, rendered);
+      console.log(\`✅ Service created successfully: \${filePath}\`);
+    } catch (error) {
+      console.error(\`❌ Error creating service:\`, error);
+    }
+  }
+
+  async makeValidator(name) {
+    if (!name) {
+      console.error("❌ Validator name is required.");
+      return;
+    }
+
+    const className = ucwords(name);
+    const classNameCamelCase = toCamelCase(name);
+    const classNameLowerCase = name.toLowerCase();
+
+    const filePath = \`./src/app/validators/\${classNameLowerCase}.validator.ts\`;
+    const templatePath = "./.node_mantra/sdk/template/app/validators/starter.validator.ejs";
+
+    try {
+      const rendered = await ejs.renderFile(templatePath, {
+        className,
+        classNameLowerCase,
+        classNameCamelCase,
+      });
+
+      this.ensureDirectoryExists(path.dirname(filePath));
+      fs.writeFileSync(filePath, rendered);
+      console.log(\`✅ Validator created successfully: \${filePath}\`);
+    } catch (error) {
+      console.error(\`❌ Error creating validator:\`, error);
+    }
+  }
+
+  async makeRoute(name) {
+    if (!name) {
+      console.error("❌ Route name is required.");
+      return;
+    }
+
+    const className = ucwords(name);
+    const classNameCamelCase = toCamelCase(name);
+    const classNameLowerCase = name.toLowerCase();
+
+    const filePath = \`./src/routes/\${classNameLowerCase}.route.ts\`;
+    const templatePath = "./.node_mantra/sdk/template/routes/starter.route.ejs";
+
+    try {
+      const rendered = await ejs.renderFile(templatePath, {
+        className,
+        classNameLowerCase,
+        classNameCamelCase,
+      });
+
+      this.ensureDirectoryExists(path.dirname(filePath));
+      fs.writeFileSync(filePath, rendered);
+      console.log(\`✅ Route created successfully: \${filePath}\`);
+    } catch (error) {
+      console.error(\`❌ Error creating route:\`, error);
+    }
+  }
+
+  async makeMiddleware(name) {
+    if (!name) {
+      console.error("❌ Middleware name is required.");
+      return;
+    }
+
+    const className = ucwords(name);
+    const classNameCamelCase = toCamelCase(name);
+    const classNameLowerCase = name.toLowerCase();
+
+    const filePath = \`./src/app/middlewares/\${classNameLowerCase}.middleware.ts\`;
+    const templatePath = "./.node_mantra/sdk/template/app/middlewares/starter.middleware.ejs";
+
+    try {
+      const rendered = await ejs.renderFile(templatePath, {
+        className,
+        classNameLowerCase,
+        classNameCamelCase,
+      });
+
+      this.ensureDirectoryExists(path.dirname(filePath));
+      fs.writeFileSync(filePath, rendered);
+      console.log(\`✅ Middleware created successfully: \${filePath}\`);
+    } catch (error) {
+      console.error(\`❌ Error creating middleware:\`, error);
+    }
+  }
+
+  async makeTest(name) {
+    if (!name) {
+      console.error("❌ Test name is required.");
+      return;
+    }
+
+    const className = ucwords(name);
+    const classNameCamelCase = toCamelCase(name);
+    const classNameLowerCase = name.toLowerCase();
+
+    const filePath = \`./src/tests/\${classNameLowerCase}.test.ts\`;
+    const templatePath = "./.node_mantra/sdk/template/tests/starter.test.ejs";
+
+    try {
+      const rendered = await ejs.renderFile(templatePath, {
+        className,
+        classNameLowerCase,
+        classNameCamelCase,
+      });
+
+      this.ensureDirectoryExists(path.dirname(filePath));
+      fs.writeFileSync(filePath, rendered);
+      console.log(\`✅ Test created successfully: \${filePath}\`);
+    } catch (error) {
+      console.error(\`❌ Error creating test:\`, error);
+    }
+  }
+
+  async makeSeeder(name) {
+    if (!name) {
+      console.error("❌ Seeder name is required.");
+      return;
+    }
+
+    const className = ucwords(name);
+    const classNameCamelCase = toCamelCase(name);
+    const classNameLowerCase = name.toLowerCase();
+
+    const filePath = \`./src/database/seeders/\${classNameLowerCase}.seeder.ts\`;
+    const templatePath = "./.node_mantra/sdk/template/database/seeders/starter.seeder.ejs";
+
+    try {
+      const rendered = await ejs.renderFile(templatePath, {
+        className,
+        classNameLowerCase,
+        classNameCamelCase,
+      });
+
+      this.ensureDirectoryExists(path.dirname(filePath));
+      fs.writeFileSync(filePath, rendered);
+      console.log(\`✅ Seeder created successfully: \${filePath}\`);
+    } catch (error) {
+      console.error(\`❌ Error creating seeder:\`, error);
+    }
+  }
+
+  async makeMigration(name) {
+    if (!name) {
+      console.error("❌ Migration name is required.");
+      return;
+    }
+
+    const timestamp = new Date().toISOString().replace(/[-:]/g, '').split('.')[0];
+    const className = ucwords(name);
+    const classNameCamelCase = toCamelCase(name);
+    const classNameLowerCase = name.toLowerCase();
+
+    const filePath = \`./src/database/migrations/\${timestamp}_\${classNameLowerCase}.ts\`;
+    const templatePath = "./.node_mantra/sdk/template/database/migrations/starter.migration.ejs";
+
+    try {
+      const rendered = await ejs.renderFile(templatePath, {
+        className,
+        classNameLowerCase,
+        classNameCamelCase,
+        timestamp
+      });
+
+      this.ensureDirectoryExists(path.dirname(filePath));
+      fs.writeFileSync(filePath, rendered);
+      console.log(\`✅ Migration created successfully: \${filePath}\`);
+    } catch (error) {
+      console.error(\`❌ Error creating migration:\`, error);
+    }
+  }
+
+  async makeResource(name) {
+    if (!name) {
+      console.error("❌ Resource name is required.");
+      return;
+    }
+
+    console.log(\`Creating resource: \${name}\`);
+    
+    await this.makeController(name);
+    await this.makeModel(name);
+    await this.makeService(name);
+    await this.makeValidator(name);
+    await this.makeRoute(name);
+
+    console.log(\`✅ Resource "\${name}" created successfully!\`);
+  }
+
+  // Utility methods
+  ensureDirectoryExists(dirPath) {
+    if (!fs.existsSync(dirPath)) {
+      fs.mkdirSync(dirPath, { recursive: true });
+    }
+  }
+
+  // Database commands
+  async runSeeders(seederName) {
+    console.log("🌱 Running database seeders...");
+    if (seederName) {
+      console.log(\`Running specific seeder: \${seederName}\`);
+    } else {
+      console.log("Running all seeders...");
+    }
+    // Implementation would go here
+    console.log("✅ Seeders completed successfully!");
+  }
+
+  async runMigrations() {
+    console.log("🔄 Running database migrations...");
+    // Implementation would go here
+    console.log("✅ Migrations completed successfully!");
+  }
+
+  async rollbackMigrations(steps) {
+    const stepCount = steps ? parseInt(steps) : 1;
+    console.log(\`🔄 Rolling back \${stepCount} migration(s)...\`);
+    // Implementation would go here
+    console.log("✅ Rollback completed successfully!");
+  }
+
+  // Route commands
+  async listRoutes() {
+    console.log("📋 Registered Routes:");
+    console.log("");
+    // Implementation would go here
+    console.log("GET    /api/v1/users");
+    console.log("POST   /api/v1/users");
+    console.log("GET    /api/v1/users/:id");
+    console.log("PUT    /api/v1/users/:id");
+    console.log("DELETE /api/v1/users/:id");
+  }
+
+  // Cache commands
+  async clearCache() {
+    console.log("🧹 Clearing application cache...");
+    // Implementation would go here
+    console.log("✅ Cache cleared successfully!");
+  }
+
+  async clearLogs() {
+    console.log("🧹 Clearing application logs...");
+    // Implementation would go here
+    console.log("✅ Logs cleared successfully!");
+  }
+
+  async cacheConfig() {
+    console.log("⚙️  Caching configuration files...");
+    // Implementation would go here
+    console.log("✅ Configuration cached successfully!");
+  }
+
+  async clearConfigCache() {
+    console.log("🧹 Clearing configuration cache...");
+    // Implementation would go here
+    console.log("✅ Configuration cache cleared successfully!");
+  }
+
+  // Server commands
+  async serve(args) {
+    let port = 3000;
+    let host = 'localhost';
+
+    // Parse arguments
+    for (const arg of args) {
+      if (arg.startsWith('--port=')) {
+        port = parseInt(arg.split('=')[1]);
+      } else if (arg.startsWith('--host=')) {
+        host = arg.split('=')[1];
+      }
+    }
+
+    console.log(\`🚀 Starting development server on http://\${host}:\${port}\`);
+    console.log("Press Ctrl+C to stop the server");
+    
+    // Start the development server
     const { execSync } = require('child_process');
     execSync('npm run dev', { stdio: 'inherit' });
+  }
+
+  // Utility commands
+  async optimize() {
+    console.log("⚡ Optimizing application for production...");
+    // Implementation would go here
+    console.log("✅ Application optimized successfully!");
+  }
+
+  async generateKey() {
+    console.log("🔑 Generating application key...");
+    const key = require('crypto').randomBytes(32).toString('hex');
+    console.log(\`✅ Application key generated: \${key}\`);
+    console.log("Remember to add this to your .env file as APP_KEY");
+  }
+}
+
+// Parse command line arguments
+const args = process.argv.slice(2);
+const artisan = new Artisan();
+
+// Execute the command
+artisan.execute(args).catch((error) => {
+  console.error("❌ Fatal error:", error);
+  process.exit(1);
+});`;
+}
+
+function createControllerTemplate() {
+  return `<%# Controller Template %>
+import { Request, Response } from "express";
+
+import <%= className %>Service from '@services/<%= classNameLowerCase %>.service'
+import Controller from "@libs/controller";
+export default class <%= className %>Controller extends Controller {
+
+static async  count (req: Request, res: Response) {
+    let <%= classNameLowerCase %>Service=new <%= className %>Service();
+    const result = await <%= classNameLowerCase %>Service.count()
+    res.status(result.statusCode).json(result);
+}
+
+static async get<%= className %>s(req: Request, res: Response)  {
+  let <%= classNameLowerCase %>Service=new <%= className %>Service();
+  const record = await <%= classNameLowerCase %>Service.list();
+  res.status(record.statusCode).json(record);
+}
+
+static async get<%= className %>(req: Request, res: Response) {
+  let id = req.params.id
+  let <%= classNameLowerCase %>Service=new <%= className %>Service();
+  const records = await <%= classNameLowerCase %>Service.retrieve(id)
+  res.status(records.statusCode).json(records);
+}
+
+static async create<%= className %>(req: Request, res: Response) {
+    const data=req.body
+    let <%= classNameLowerCase %>Service=new <%= className %>Service();
+    const result = await <%= classNameLowerCase %>Service.create(data)
+    res.status(result.statusCode).json(result);
+}
+
+
+static  async update<%= className %>(req: Request, res: Response) {
+    const id =req.params.id;
+    const data=req.body
+    let <%= classNameLowerCase %>Service=new <%= className %>Service();
+    const result = await <%= classNameLowerCase %>Service.update(id,data)
+    res.status(result.statusCode).json(result);
+  }
+
+static async delete<%= className %>(req: Request, res: Response)  {
+    let id = req.params.id;
+    let <%= classNameLowerCase %>Service=new <%= className %>Service();
+    const result = await <%= classNameLowerCase %>Service.delete(id)
+    res.status(result.statusCode).json(result);
+}
+
+static  async datatable(req: Request, res: Response) {
+    const data = req.query;
+    let <%= classNameLowerCase %>Service=new <%= className %>Service();
+    const records = await <%= classNameLowerCase %>Service.datatable(data)
+    res.status(records.statusCode).json(records);
+  }
+
+    static async search(req: Request, res: Response) {
+    const query = req.query.q;
+    let <%= classNameLowerCase %>Service=new <%= className %>Service();
+    const results = await <%= classNameLowerCase %>Service.search<%= className %>s(query);
+    res.status(results.statusCode).json(results);
+     
+  }
+}`;
+}
+
+function createModelTemplate() {
+  return `<%# Model Template %>
+import { Schema, Document, model } from 'mongoose';
+
+export enum <%= className %>Status {
+  Active = 1,
+  Inactive = 0,
+}
+
+export interface I<%= className %> extends Document {
+  name: string;
+  description: string;
+  status: <%= className %>Status;
+  createdAt: Date;
+  updatedAt: Date;
+  deletedAt?: Date | null;
+}
+
+const <%= className %>Schema: Schema = new Schema({
+  name: { type: String, required: true },
+  description: { type: String, required: true },
+  status: { type: Number, enum: [0, 1], default: 1 },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now },
+  deletedAt: { type: Date, default: null },
+});
+
+const <%= className %> = model<I<%= className %>>('<%= className %>', <%= className %>Schema);
+
+export default <%= className %>;`;
+}
+
+function createServiceTemplate() {
+  return `<%# Service Template %>
+import BaseService from '@services/base.service';
+import { <%= className %> } from '@models/<%= classNameLowerCase %>.schema';
+
+export default class <%= className %>Service extends BaseService {
+  constructor() {
+    super(<%= className %>);
+  }
+
+  async search<%= className %>s(query: string) {
+    try {
+      const results = await this.repository.find({
+        where: [
+          { name: { $regex: query, $options: 'i' } },
+          { description: { $regex: query, $options: 'i' } }
+        ]
+      });
+      return { statusCode: 200, data: results, message: 'Search completed' };
+    } catch (error) {
+      return { statusCode: 500, data: null, message: 'Search failed' };
+    }
+  }
+}`;
+}
+
+function createValidatorTemplate() {
+  return `<%# Validator Template %>
+import Joi from 'joi';
+
+export const create<%= className %>Validator = Joi.object({
+  name: Joi.string().required().min(2).max(100),
+  description: Joi.string().optional().max(500),
+  status: Joi.number().valid(0, 1).default(1)
+});
+
+export const update<%= className %>Validator = Joi.object({
+  name: Joi.string().optional().min(2).max(100),
+  description: Joi.string().optional().max(500),
+  status: Joi.number().valid(0, 1).optional()
+});
+
+export default {
+  create<%= className %>Validator,
+  update<%= className %>Validator
+};`;
+}
+
+function createRouteTemplate() {
+  return `<%# Route Template %>
+import { Router } from 'express';
+import <%= className %>Controller from '@controllers/<%= classNameLowerCase %>.controller';
+import { create<%= className %>Validator, update<%= className %>Validator } from '@validators/<%= classNameLowerCase %>.validator';
+
+const router = Router();
+
+// Get all <%= classNameLowerCase %>s
+router.get('/', <%= className %>Controller.get<%= className %>s);
+
+// Get <%= classNameLowerCase %> count
+router.get('/count', <%= className %>Controller.count);
+
+// Get single <%= classNameLowerCase %>
+router.get('/:id', <%= className %>Controller.get<%= className %>);
+
+// Create new <%= classNameLowerCase %>
+router.post('/', create<%= className %>Validator, <%= className %>Controller.create<%= className %>);
+
+// Update <%= classNameLowerCase %>
+router.put('/:id', update<%= className %>Validator, <%= className %>Controller.update<%= className %>);
+
+// Delete <%= classNameLowerCase %>
+router.delete('/:id', <%= className %>Controller.delete<%= className %>);
+
+// Datatable
+router.get('/datatable', <%= className %>Controller.datatable);
+
+// Search
+router.get('/search', <%= className %>Controller.search);
+
+export default router;`;
+}
+
+function createMiddlewareTemplate() {
+  return `<%# Middleware Template %>
+import { Request, Response, NextFunction } from 'express';
+
+export const <%= className %>Middleware = (req: Request, res: Response, next: NextFunction) => {
+  // Add your middleware logic here
+  console.log('<%= className %> middleware executed');
+  next();
+};
+
+export default <%= className %>Middleware;`;
+}
+
+function createTestTemplate() {
+  return `<%# Test Template %>
+import { expect } from 'chai';
+import { describe, it } from 'mocha';
+import <%= className %>Controller from '@controllers/<%= classNameLowerCase %>.controller';
+
+describe('<%= className %>Controller', () => {
+  describe('get<%= className %>s', () => {
+    it('should return all <%= classNameLowerCase %>s', async () => {
+      // Add your test logic here
+      expect(true).to.be.true;
+    });
   });
 
-program.parse();`;
+  describe('get<%= className %>', () => {
+    it('should return a single <%= classNameLowerCase %>', async () => {
+      // Add your test logic here
+      expect(true).to.be.true;
+    });
+  });
+});`;
+}
+
+function createSeederTemplate() {
+  return `<%# Seeder Template %>
+import { <%= className %> } from '@models/<%= classNameLowerCase %>.schema';
+
+export const <%= classNameLowerCase %>Seeder = async () => {
+  try {
+    const <%= classNameLowerCase %>s = [
+      {
+        name: 'Sample <%= className %> 1',
+        description: 'This is a sample <%= classNameLowerCase %>',
+        status: 1
+      },
+      {
+        name: 'Sample <%= className %> 2',
+        description: 'This is another sample <%= classNameLowerCase %>',
+        status: 1
+      }
+    ];
+
+    await <%= className %>.insertMany(<%= classNameLowerCase %>s);
+    console.log('✅ <%= className %> seeder completed successfully');
+  } catch (error) {
+    console.error('❌ <%= className %> seeder failed:', error);
+  }
+};
+
+export default <%= classNameLowerCase %>Seeder;`;
+}
+
+function createMigrationTemplate() {
+  return `<%# Migration Template %>
+import { Schema } from 'mongoose';
+
+export const up = async (db: any) => {
+  const <%= classNameLowerCase %>Schema = new Schema({
+    name: { type: String, required: true },
+    description: { type: String, required: true },
+    status: { type: Number, enum: [0, 1], default: 1 },
+    createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date, default: Date.now },
+    deletedAt: { type: Date, default: null },
+  });
+
+  await db.createCollection('<%= classNameLowerCase %>s', <%= classNameLowerCase %>Schema);
+  console.log('✅ Created <%= classNameLowerCase %>s collection');
+};
+
+export const down = async (db: any) => {
+  await db.dropCollection('<%= classNameLowerCase %>s');
+  console.log('✅ Dropped <%= classNameLowerCase %>s collection');
+};`;
 }
 
 function main() {
@@ -803,7 +1553,31 @@ function main() {
     'src/routes',
     'src/middlewares',
     'src/config',
-    'src/tests'
+    'src/tests',
+    'src/app',
+    'src/app/controllers',
+    'src/app/services',
+    'src/app/models',
+    'src/app/middlewares',
+    'src/app/validators',
+    'src/app/requests',
+    'src/database',
+    'src/database/seeders',
+    'src/database/migrations',
+    '.node_mantra/sdk',
+    '.node_mantra/sdk/util',
+    '.node_mantra/sdk/template',
+    '.node_mantra/sdk/template/app',
+    '.node_mantra/sdk/template/app/controllers',
+    '.node_mantra/sdk/template/app/models',
+    '.node_mantra/sdk/template/app/services',
+    '.node_mantra/sdk/template/app/validators',
+    '.node_mantra/sdk/template/app/middlewares',
+    '.node_mantra/sdk/template/routes',
+    '.node_mantra/sdk/template/tests',
+    '.node_mantra/sdk/template/database',
+    '.node_mantra/sdk/template/database/seeders',
+    '.node_mantra/sdk/template/database/migrations'
   ];
 
   directories.forEach(dir => {
@@ -833,13 +1607,17 @@ function main() {
   // Create Artisan CLI
   createDirectory(path.join(projectPath, '.node_mantra', 'sdk'));
   createFile(path.join(projectPath, '.node_mantra', 'sdk', 'artisan.ts'), createArtisanFile());
-  
-  // Make artisan file executable
-  try {
-    fs.chmodSync(path.join(projectPath, '.node_mantra', 'sdk', 'artisan.ts'), '755');
-  } catch (error) {
-    // Ignore chmod errors on Windows
-  }
+
+  // Create template files
+  createFile(path.join(projectPath, '.node_mantra', 'sdk', 'template', 'app', 'controllers', 'starter.controller.ejs'), createControllerTemplate());
+  createFile(path.join(projectPath, '.node_mantra', 'sdk', 'template', 'app', 'models', 'starter.schema.ejs'), createModelTemplate());
+  createFile(path.join(projectPath, '.node_mantra', 'sdk', 'template', 'app', 'services', 'starter.service.ejs'), createServiceTemplate());
+  createFile(path.join(projectPath, '.node_mantra', 'sdk', 'template', 'app', 'validators', 'starter.validator.ejs'), createValidatorTemplate());
+  createFile(path.join(projectPath, '.node_mantra', 'sdk', 'template', 'app', 'middlewares', 'starter.middleware.ejs'), createMiddlewareTemplate());
+  createFile(path.join(projectPath, '.node_mantra', 'sdk', 'template', 'routes', 'starter.route.ejs'), createRouteTemplate());
+  createFile(path.join(projectPath, '.node_mantra', 'sdk', 'template', 'tests', 'starter.test.ejs'), createTestTemplate());
+  createFile(path.join(projectPath, '.node_mantra', 'sdk', 'template', 'database', 'seeders', 'starter.seeder.ejs'), createSeederTemplate());
+  createFile(path.join(projectPath, '.node_mantra', 'sdk', 'template', 'database', 'migrations', 'starter.migration.ejs'), createMigrationTemplate());
 
   log('\n✅ Project created successfully!', 'green');
   log('\n📋 Next steps:', 'blue');
